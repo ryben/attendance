@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Attendance Generator</title>
+    <link rel="icon" type="image/x-icon" href="attendance_icon.jpg">
+</head>
+<body onload="onPageLoad()">
+    <button id="settingsButton" class="simpleButton" onclick="openSettingsPanel()">&#9881;</button>
+    <div class="center" style="width: 500px; padding: 30px;">
+        <div id="settingsDiv">
+            <button id="closeSettingsButton" class="simpleButton" onclick="closeSettingsPanel()">&#x2715</button>
+            <input id="nameInput" class="textarea" rows="1" placeholder="Name" onkeyup="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()"></input>
+            <button id="openScheduleJsonButton" onclick="openScheduleJsonInput()" style="float: right; height: 35px;">Apply Schedules JSON</button>
+            <textarea id="scheduleJsonInput" class="textarea" placeholder="Schedules JSON" onkeyup="onChangeScheduleInput()" onchange="generateAttendanceText()" style="display: none;"></textarea>
+        </div>
+        <div id="attendanceDiv">
+            <textarea id="attendanceText" class="textarea" spellcheck=”false” autocomplete="off"></textarea>
+            <strong id="statusText"></strong>
+            <button id="refreshButton" onclick="generateAttendanceText()" onmousedown="clearAttendanceText();clearStatusText()" class="simpleButton">&#x21bb;</button>
+        </div>
+        <button onclick="copyTextToClipboard()" onmousedown="clearStatusText()" style="margin-top: 15px; width: 500px;" class="button">Copy Attendance</button>
+    </div>
+</body>
+</html>
+
+<script type="text/javascript">
+    const KEY_NAME = "KEY_NAME"
+    const KEY_SCHEDULES_JSON = "KEY_SCHEDULES_JSON"
+    const ERROR_SCHEDULE_JSON_PARSING = "ERROR_SCHEDULE_JSON_PARSING"
+
+    class ScheduleJsonParsingError {
+        constructor(message) {
+            this.message = message
+        }
+    }
+
+    function getGatheringSchedules() {
+        try {
+            if (getScheduleJsonInputElement().value.trim() === "") {
+                return ""
+            } else {
+                return JSON.parse(getScheduleJsonInputElement().value)
+            }
+        } catch (e) {
+            throw new ScheduleJsonParsingError("Invalid Schedule JSON")
+        }
+        return ""
+    }
+
+    function onPageLoad() {
+        loadSavedValues()
+        emphasizeIfEmptyName()
+        generateAttendanceText()
+    }
+
+    function emphasizeIfEmptyName() {
+        if (getNameInputElement().value.trim() === "") {
+            document.getElementById("settingsButton").style.animation = "glowing 1300ms infinite"
+        } else {
+            clearSettingsButtonAnimation()
+        }
+    }
+
+    function clearSettingsButtonAnimation() {
+        document.getElementById("settingsButton").style.animation = ""
+    }
+
+    function loadSavedValues() {
+        getNameInputElement().value = localStorage.getItem(KEY_NAME)
+        getScheduleJsonInputElement().value = localStorage.getItem(KEY_SCHEDULES_JSON)
+    }
+
+    function onChangeName() {
+        localStorage.setItem(KEY_NAME, getNameInputElement().value)
+    }
+
+    function onChangeScheduleInput() {
+        localStorage.setItem(KEY_SCHEDULES_JSON, getScheduleJsonInputElement().value)
+    }
+
+    function generateAttendanceText() {
+        setStatusText("")
+
+        var currentGathering = ""
+        var gatheringType = ""
+
+        try {
+            currentGathering = determineGatheringNow()
+            gatheringType = Object.keys(currentGathering)[0]
+        } catch (e) {
+            if (e instanceof ScheduleJsonParsingError) {
+                setStatusText(e.message)
+            } else {
+                setStatusText("Something went wrong")
+            }
+        }
+
+        getAttendanceTextElement().value =
+            "Attendance " + (gatheringType || "")
+            + "\n" + getAttendanceDate() + " | " + (currentGathering[gatheringType] || getCurrentAttendanceTime())
+            + "\n" + getName()
+    }
+
+    function getName() {
+        return getNameInputElement().value || ""
+    }
+
+    function getCurrentAttendanceTime() {
+        var d = getNowDateTime()
+        d = (d.getHours() > 12 ? d.getHours() - 12 : d.getHours()) + ':' + d.getMinutes() + (d.getHours() >= 12 ? "pm" : "am");
+        return d
+    }
+
+    function getNameInputElement() {
+        return document.getElementById("nameInput")
+    }
+
+    function getScheduleJsonInputElement() {
+        return document.getElementById("scheduleJsonInput")
+    }
+
+    function getAttendanceTextElement() {
+        return document.getElementById("attendanceText")
+    }
+
+    function getStatusTextElement() {
+        return document.getElementById("statusText")
+    }
+
+    function getGatheringType(gatheringSchedule) {
+        return gatheringTypeMap[gatheringSchedule]
+    }
+
+    function determineGatheringNow() {
+        var foundGatheringType = ""
+        var closestTime = null
+
+        var minMinuteDiff = Number.MAX_SAFE_INTEGER
+        var now = getNowDateTime()
+
+        for (const [gatheringType, schedules] of Object.entries(getGatheringSchedules())) {
+            for (const [day, times] of Object.entries(schedules)) {
+                if (day != now.getDay()) {
+                    continue
+                }
+                for (const gatheringTime of times) {
+                    var minuteDiff = Math.abs(toMinuteOfDay(now) - getMinuteOfDay(gatheringTime))
+
+                    if (minuteDiff <= minMinuteDiff) {
+                        minMinuteDiff = minuteDiff
+                        closestTime = gatheringTime
+                        foundGatheringType = gatheringType
+                    }
+                }
+            }
+        }
+
+        var gatheringNow = {}
+        gatheringNow[foundGatheringType] = closestTime
+
+        return gatheringNow
+    }
+
+    function getNowDateTime() {
+        var now = new Date()
+        return now
+    }
+
+    function getAttendanceDate() {
+        var now = getNowDateTime()
+        var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        var date = months[now.getMonth()] + " " + now.getDate() + ", " + now.getFullYear()
+
+        return date
+    }
+
+    function toMinuteOfDay(dateTime) {
+        var minuteOfDay = dateTime.getHours() * 60 + dateTime.getMinutes()
+        return minuteOfDay
+    }
+
+    function getMinuteOfDay(timeStr) {
+        var hours = getHourOfDay(timeStr)
+        var mins = parseInt(timeStr.substr(timeStr.length - 4, timeStr.length - 2))
+
+        return hours * 60 + mins
+    }
+
+    function getHourOfDay(timeStr) {
+        var hourPart = parseInt(timeStr.split(':')[0])
+        var amPm = timeStr.substr(timeStr.length - 2, timeStr.length).toLowerCase()
+
+        if (amPm == 'am' && hourPart == 12) {
+            hourPart = 0
+        } else if (amPm == "pm" && hourPart < 12) {
+            hourPart += 12
+        }
+
+        return hourPart
+    }
+
+    function clearStatusText() {
+        setStatusText("")
+    }
+
+    function clearAttendanceText() {
+        getAttendanceTextElement().value = ""
+    }
+
+    function copyTextToClipboard() {
+        navigator.clipboard.writeText(getAttendanceTextElement().value);
+        setStatusText("Copied to clipboard".toUpperCase())
+    }
+
+    function setStatusText(statusText) {
+        getStatusTextElement().innerHTML = statusText
+    }
+
+    function getSettingsDiv() {
+        return document.getElementById("settingsDiv")
+    }
+
+    function closeSettingsPanel() {
+        getSettingsDiv().style.display = "none"
+    }
+
+    function openSettingsPanel() {
+        getSettingsDiv().style.display = "block"
+        getNameInputElement().focus()
+        clearSettingsButtonAnimation()
+    }
+
+    function openScheduleJsonInput() {
+        document.getElementById("scheduleJsonInput").style.display = "block"
+        document.getElementById("openScheduleJsonButton").style.display = "none"
+
+    }
+</script>
+
+
+
+<style>
+    .button {
+        background-color: #4CAF50;
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 9px #999;
+        color: #fff;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 24px;
+        outline: none;
+        padding: 15px 25px;
+        text-align: center;
+        text-decoration: none;
+    }
+
+    .button:hover {
+        background-color: #3e8e41
+    }
+
+    .button:active {
+        background-color: #3e8e41;
+        box-shadow: 0 5px #666;
+        transform: translateY(4px);
+    }
+
+    .center {
+        margin: auto;
+        padding: 10px;
+        width: 50%;
+    }
+
+    #attendanceText {
+        box-sizing: border-box;
+        height: 180px;
+        margin-top: 30px;
+        resize: none;
+    }
+
+    #scheduleJsonInput {
+        font-size: 16px;
+        height: 280px;
+        overflow-wrap: normal;
+        overflow-x: scroll;
+        resize: auto;
+        resize: vertical;
+        white-space: pre;
+        word-wrap: revert;
+    }
+
+    .textarea {
+        background-color: #f8f8f8;
+        border-radius: 4px;
+        border: 2px solid #ccc;
+        box-sizing: border-box;
+        font-size: 24px;
+        padding: 12px 20px;
+        resize: none;
+        width: 100%;
+        width: 500px;
+    }
+
+    #nameInput {
+        margin-bottom: 5px;
+    }
+
+    #refreshButton {
+        bottom:10px;
+        position:absolute;
+        right:10px;
+    }
+
+    #statusText {
+        bottom:10px;
+        color: rgb(180,180,180);
+        font-size: 20px;
+        position:absolute;
+        right:10px;
+        text-align:center;
+        width: 500px;
+    }
+
+    #attendanceDiv {
+        display:inline-block;
+        position:relative;
+    }
+
+    .simpleButton {
+        font-size:24px;
+        height: 40px;
+        width: 40px;
+    }
+
+    #closeSettingsButton {
+        margin-bottom: 4px;
+        float: right;
+    }
+
+    @keyframes glowing {
+        0% {
+          background-color: #2ba805;
+          box-shadow: 0 0 5px #2ba805;
+        }
+        50% {
+          background-color: #49e819;
+          box-shadow: 0 0 20px #49e819;
+        }
+        100% {
+          background-color: #2ba805;
+          box-shadow: 0 0 5px #2ba805;
+        }
+      }
+
+    #settingsDiv {
+        display: none;
+        margin-bottom: 40px;
+    }
+
+</style>
