@@ -1,9 +1,12 @@
-const CACHE_NAME = 'attendance-v1';
+const CACHE_NAME = 'attendance-v2';
 const ASSETS = [
     './',
     './index.html',
     './manifest.json',
-    './attendance_icon.jpg'
+    './attendance_icon.png',
+    './attendance_icon-180.png',
+    './attendance_icon-192.png',
+    './attendance_icon-512.png'
 ];
 
 self.addEventListener('install', event => {
