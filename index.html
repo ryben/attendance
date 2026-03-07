@@ -4,7 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Attendance Generator</title>
-    <link rel="icon" type="image/x-icon" href="attendance_icon.jpg">
+    <link rel="icon" type="image/jpeg" href="attendance_icon.jpg">
+    <link rel="apple-touch-icon" href="attendance_icon.jpg">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4CAF50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Attendance">
 </head>
 <body onload="onPageLoad()">
     <button id="settingsButton" class="simpleButton" onclick="openSettingsPanel()">&#9881;</button>
@@ -22,6 +28,13 @@
         </div>
         <button onclick="copyTextToClipboard()" onmousedown="clearStatusText()" style="margin-top: 15px; width: 500px;" class="button">Copy Attendance</button>
     </div>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js');
+            });
+        }
+    </script>
 </body>
 </html>
 

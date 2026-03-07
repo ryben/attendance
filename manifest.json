@@ -1,0 +1,17 @@
+{
+  "name": "Attendance Generator",
+  "short_name": "Attendance",
+  "description": "Generate and copy attendance text quickly",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4CAF50",
+  "icons": [
+    {
+      "src": "attendance_icon.jpg",
+      "sizes": "521x543",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
