@@ -14,7 +14,7 @@
 </head>
 <body onload="onPageLoad()">
     <button id="settingsButton" class="simpleButton" onclick="openSettingsPanel()">&#9881;</button>
-    <div class="center" style="width: 500px; padding: 30px;">
+    <div class="center">
         <div id="settingsDiv">
             <button id="closeSettingsButton" class="simpleButton" onclick="closeSettingsPanel()">&#x2715</button>
             <input id="nameInput" class="textarea" rows="1" placeholder="Name" onkeyup="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()"></input>
@@ -26,7 +26,7 @@
             <strong id="statusText"></strong>
             <button id="refreshButton" onclick="generateAttendanceText()" onmousedown="clearAttendanceText();clearStatusText()" class="simpleButton">&#x21bb;</button>
         </div>
-        <button onclick="copyTextToClipboard()" onmousedown="clearStatusText()" style="margin-top: 15px; width: 500px;" class="button">Copy Attendance</button>
+        <button onclick="copyTextToClipboard()" onmousedown="clearStatusText()" style="margin-top: 15px; width: 100%;" class="button">Copy Attendance</button>
     </div>
     <script>
         if ('serviceWorker' in navigator) {
@@ -282,8 +282,10 @@
 
     .center {
         margin: auto;
-        padding: 10px;
-        width: 50%;
+        padding: 30px;
+        max-width: 500px;
+        width: 100%;
+        box-sizing: border-box;
     }
 
     #attendanceText {
@@ -313,7 +315,6 @@
         padding: 12px 20px;
         resize: none;
         width: 100%;
-        width: 500px;
     }
 
     #nameInput {
@@ -333,7 +334,7 @@
         position:absolute;
         right:10px;
         text-align:center;
-        width: 500px;
+        width: 100%;
     }
 
     #attendanceDiv {
