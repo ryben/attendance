@@ -17,7 +17,7 @@
     <div class="center" style="width: 500px; padding: 30px;">
         <div id="settingsDiv">
             <button id="closeSettingsButton" class="simpleButton" onclick="closeSettingsPanel()">&#x2715</button>
-            <input id="nameInput" class="textarea" rows="1" placeholder="Name" oninput="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()"></input>
+            <input id="nameInput" class="textarea" rows="1" placeholder="Name" oninput="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()">
             <div class="settingsActionRow">
                 <button id="openScheduleJsonButton" class="settingsActionButton" onclick="openScheduleJsonInput()">Edit Schedules JSON</button>
                 <button id="openLocationJsonButton" class="settingsActionButton" onclick="openLocationJsonInput()">Edit Nearby Places JSON</button>
@@ -135,7 +135,13 @@
         localStorage.setItem(KEY_LOCATIONS_JSON, getLocationJsonInputElement().value)
     }
 
-    async function generateAttendanceText() {
+    function generateAttendanceText() {
+        updateAttendanceText().catch(() => {
+            setStatusText("Failed to update attendance text")
+        })
+    }
+
+    async function updateAttendanceText() {
         setStatusText("")
 
         var currentGathering = {}
@@ -150,7 +156,7 @@
             if (e instanceof ScheduleJsonParsingError || e instanceof LocationJsonParsingError) {
                 setStatusText(e.message)
             } else {
-                setStatusText("Something went wrong")
+                setStatusText("Failed to update attendance text")
             }
         }
 
@@ -231,7 +237,7 @@
             return ""
         }
 
-        return nearbyLocationAssociation.template || nearbyLocationAssociation.place || nearbyLocationAssociation.name || ""
+        return nearbyLocationAssociation.template || nearbyLocationAssociation.place || ""
     }
 
     async function determineNearbyLocationAssociation() {
@@ -300,31 +306,44 @@
             return currentLocationLookupPromise
         }
 
-        currentLocationLookupPromise = new Promise(resolve => {
-            if (!navigator.geolocation) {
-                currentLocationLookupPromise = null
-                resolve(null)
-                return
-            }
-
-            navigator.geolocation.getCurrentPosition(position => {
-                lastKnownCoordinates = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude
-                }
-                lastKnownCoordinatesAt = new Date().getTime()
-                currentLocationLookupPromise = null
-                resolve(lastKnownCoordinates)
-            }, () => {
-                currentLocationLookupPromise = null
-                resolve(null)
-            }, {
-                enableHighAccuracy: true,
-                maximumAge: LOCATION_LOOKUP_MAX_AGE_MS,
-                timeout: 5000
-            })
+        var locationLookupResolve = null
+        var locationLookupPromise = new Promise(resolve => {
+            locationLookupResolve = resolve
         })
 
+        currentLocationLookupPromise = locationLookupPromise
+
+        if (!navigator.geolocation) {
+            currentLocationLookupPromise = null
+            locationLookupResolve(null)
+            return locationLookupPromise
+        }
+
+        navigator.geolocation.getCurrentPosition(position => {
+            var resolvedCoordinates = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude
+            }
+            if (currentLocationLookupPromise !== locationLookupPromise) {
+                locationLookupResolve(resolvedCoordinates)
+                return
+            }
+            lastKnownCoordinates = resolvedCoordinates
+            lastKnownCoordinatesAt = new Date().getTime()
+            currentLocationLookupPromise = null
+            locationLookupResolve(lastKnownCoordinates)
+        }, () => {
+            if (currentLocationLookupPromise !== locationLookupPromise) {
+                locationLookupResolve(null)
+                return
+            }
+            currentLocationLookupPromise = null
+            locationLookupResolve(null)
+        }, {
+            enableHighAccuracy: true,
+            maximumAge: LOCATION_LOOKUP_MAX_AGE_MS,
+            timeout: 5000
+        })
         return currentLocationLookupPromise
     }
 
