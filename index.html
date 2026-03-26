@@ -17,9 +17,13 @@
     <div class="center" style="width: 500px; padding: 30px;">
         <div id="settingsDiv">
             <button id="closeSettingsButton" class="simpleButton" onclick="closeSettingsPanel()">&#x2715</button>
-            <input id="nameInput" class="textarea" rows="1" placeholder="Name" onkeyup="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()"></input>
-            <button id="openScheduleJsonButton" onclick="openScheduleJsonInput()" style="float: right; height: 35px;">Apply Schedules JSON</button>
-            <textarea id="scheduleJsonInput" class="textarea" placeholder="Schedules JSON" onkeyup="onChangeScheduleInput()" onchange="generateAttendanceText()" style="display: none;"></textarea>
+            <input id="nameInput" class="textarea" rows="1" placeholder="Name" oninput="onChangeName();generateAttendanceText()" onfocusout="emphasizeIfEmptyName()" onfocusin="clearSettingsButtonAnimation()"></input>
+            <div class="settingsActionRow">
+                <button id="openScheduleJsonButton" class="settingsActionButton" onclick="openScheduleJsonInput()">Edit Schedules JSON</button>
+                <button id="openLocationJsonButton" class="settingsActionButton" onclick="openLocationJsonInput()">Edit Nearby Places JSON</button>
+            </div>
+            <textarea id="scheduleJsonInput" class="textarea" placeholder="Schedules JSON" oninput="onChangeScheduleInput();generateAttendanceText()" style="display: none;"></textarea>
+            <textarea id="locationJsonInput" class="textarea" placeholder='Nearby Places JSON&#10;[&#10;  {&#10;    "place": "MCGI Addas",&#10;    "template": "MCGI Addas",&#10;    "latitude": 14.5995,&#10;    "longitude": 120.9842,&#10;    "radiusMeters": 150&#10;  }&#10;]' oninput="onChangeLocationInput();generateAttendanceText()" style="display: none;"></textarea>
         </div>
         <div id="attendanceDiv">
             <textarea id="attendanceText" class="textarea" spellcheck=”false” autocomplete="off"></textarea>
@@ -41,13 +45,25 @@
 <script type="text/javascript">
     const KEY_NAME = "KEY_NAME"
     const KEY_SCHEDULES_JSON = "KEY_SCHEDULES_JSON"
-    const ERROR_SCHEDULE_JSON_PARSING = "ERROR_SCHEDULE_JSON_PARSING"
+    const KEY_LOCATIONS_JSON = "KEY_LOCATIONS_JSON"
+    const DEFAULT_LOCATION_RADIUS_METERS = 150
+    const LOCATION_LOOKUP_MAX_AGE_MS = 5 * 60 * 1000
 
     class ScheduleJsonParsingError {
         constructor(message) {
             this.message = message
         }
     }
+
+    class LocationJsonParsingError {
+        constructor(message) {
+            this.message = message
+        }
+    }
+
+    var lastKnownCoordinates = null
+    var lastKnownCoordinatesAt = 0
+    var currentLocationLookupPromise = null
 
     function getGatheringSchedules() {
         try {
@@ -60,6 +76,27 @@
             throw new ScheduleJsonParsingError("Invalid Schedule JSON")
         }
         return ""
+    }
+
+    function getLocationAssociations() {
+        try {
+            if (getLocationJsonInputElement().value.trim() === "") {
+                return []
+            }
+
+            var locationAssociations = JSON.parse(getLocationJsonInputElement().value)
+
+            if (!Array.isArray(locationAssociations)) {
+                throw new LocationJsonParsingError("Nearby Places JSON should be a list")
+            }
+
+            return locationAssociations
+        } catch (e) {
+            if (e instanceof LocationJsonParsingError) {
+                throw e
+            }
+            throw new LocationJsonParsingError("Invalid Nearby Places JSON")
+        }
     }
 
     function onPageLoad() {
@@ -81,8 +118,9 @@
     }
 
     function loadSavedValues() {
-        getNameInputElement().value = localStorage.getItem(KEY_NAME)
-        getScheduleJsonInputElement().value = localStorage.getItem(KEY_SCHEDULES_JSON)
+        getNameInputElement().value = localStorage.getItem(KEY_NAME) || ""
+        getScheduleJsonInputElement().value = localStorage.getItem(KEY_SCHEDULES_JSON) || ""
+        getLocationJsonInputElement().value = localStorage.getItem(KEY_LOCATIONS_JSON) || ""
     }
 
     function onChangeName() {
@@ -93,17 +131,23 @@
         localStorage.setItem(KEY_SCHEDULES_JSON, getScheduleJsonInputElement().value)
     }
 
-    function generateAttendanceText() {
+    function onChangeLocationInput() {
+        localStorage.setItem(KEY_LOCATIONS_JSON, getLocationJsonInputElement().value)
+    }
+
+    async function generateAttendanceText() {
         setStatusText("")
 
-        var currentGathering = ""
+        var currentGathering = {}
         var gatheringType = ""
+        var locationTemplate = ""
 
         try {
             currentGathering = determineGatheringNow()
             gatheringType = Object.keys(currentGathering)[0]
+            locationTemplate = await getNearbyLocationTemplate()
         } catch (e) {
-            if (e instanceof ScheduleJsonParsingError) {
+            if (e instanceof ScheduleJsonParsingError || e instanceof LocationJsonParsingError) {
                 setStatusText(e.message)
             } else {
                 setStatusText("Something went wrong")
@@ -114,6 +158,7 @@
             "Attendance " + (gatheringType || "")
             + "\n" + getAttendanceDate() + " | " + (currentGathering[gatheringType] || getCurrentAttendanceTime())
             + "\n" + getName()
+            + (locationTemplate ? "\n" + locationTemplate : "")
     }
 
     function getName() {
@@ -136,6 +181,10 @@
 
     function getAttendanceTextElement() {
         return document.getElementById("attendanceText")
+    }
+
+    function getLocationJsonInputElement() {
+        return document.getElementById("locationJsonInput")
     }
 
     function getStatusTextElement() {
@@ -174,6 +223,129 @@
         gatheringNow[foundGatheringType] = closestTime
 
         return gatheringNow
+    }
+
+    async function getNearbyLocationTemplate() {
+        var nearbyLocationAssociation = await determineNearbyLocationAssociation()
+        if (!nearbyLocationAssociation) {
+            return ""
+        }
+
+        return nearbyLocationAssociation.template || nearbyLocationAssociation.place || nearbyLocationAssociation.name || ""
+    }
+
+    async function determineNearbyLocationAssociation() {
+        var locationAssociations = getLocationAssociations()
+        if (locationAssociations.length === 0) {
+            return null
+        }
+
+        var currentCoordinates = await getCurrentCoordinates()
+        if (!currentCoordinates) {
+            return null
+        }
+
+        var closestAssociation = null
+        var closestDistanceMeters = Number.MAX_SAFE_INTEGER
+
+        for (const locationAssociation of locationAssociations) {
+            if (!locationAssociation || typeof locationAssociation !== "object") {
+                continue
+            }
+
+            var latitude = getAssociationCoordinate(locationAssociation, ["latitude", "lat"])
+            var longitude = getAssociationCoordinate(locationAssociation, ["longitude", "lng", "long"])
+            var radiusMeters = parseFloat(locationAssociation.radiusMeters)
+
+            if (isNaN(latitude) || isNaN(longitude)) {
+                continue
+            }
+
+            if (isNaN(radiusMeters) || radiusMeters <= 0) {
+                radiusMeters = DEFAULT_LOCATION_RADIUS_METERS
+            }
+
+            var distanceMeters = getDistanceMeters(
+                currentCoordinates.latitude,
+                currentCoordinates.longitude,
+                latitude,
+                longitude
+            )
+
+            if (distanceMeters <= radiusMeters && distanceMeters < closestDistanceMeters) {
+                closestDistanceMeters = distanceMeters
+                closestAssociation = locationAssociation
+            }
+        }
+
+        return closestAssociation
+    }
+
+    function getAssociationCoordinate(locationAssociation, possibleKeys) {
+        for (const key of possibleKeys) {
+            if (locationAssociation[key] !== undefined && locationAssociation[key] !== null && locationAssociation[key] !== "") {
+                return parseFloat(locationAssociation[key])
+            }
+        }
+
+        return NaN
+    }
+
+    function getCurrentCoordinates() {
+        if (lastKnownCoordinates && (new Date().getTime() - lastKnownCoordinatesAt) < LOCATION_LOOKUP_MAX_AGE_MS) {
+            return Promise.resolve(lastKnownCoordinates)
+        }
+
+        if (currentLocationLookupPromise) {
+            return currentLocationLookupPromise
+        }
+
+        currentLocationLookupPromise = new Promise(resolve => {
+            if (!navigator.geolocation) {
+                currentLocationLookupPromise = null
+                resolve(null)
+                return
+            }
+
+            navigator.geolocation.getCurrentPosition(position => {
+                lastKnownCoordinates = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                }
+                lastKnownCoordinatesAt = new Date().getTime()
+                currentLocationLookupPromise = null
+                resolve(lastKnownCoordinates)
+            }, () => {
+                currentLocationLookupPromise = null
+                resolve(null)
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: LOCATION_LOOKUP_MAX_AGE_MS,
+                timeout: 5000
+            })
+        })
+
+        return currentLocationLookupPromise
+    }
+
+    function getDistanceMeters(startLatitude, startLongitude, endLatitude, endLongitude) {
+        var earthRadiusMeters = 6371000
+        var latitudeDiff = toRadians(endLatitude - startLatitude)
+        var longitudeDiff = toRadians(endLongitude - startLongitude)
+        var startLatitudeRadians = toRadians(startLatitude)
+        var endLatitudeRadians = toRadians(endLatitude)
+
+        var a =
+            Math.sin(latitudeDiff / 2) * Math.sin(latitudeDiff / 2)
+            + Math.cos(startLatitudeRadians) * Math.cos(endLatitudeRadians)
+            * Math.sin(longitudeDiff / 2) * Math.sin(longitudeDiff / 2)
+
+        var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return earthRadiusMeters * c
+    }
+
+    function toRadians(value) {
+        return value * (Math.PI / 180)
     }
 
     function getNowDateTime() {
@@ -248,7 +420,11 @@
     function openScheduleJsonInput() {
         document.getElementById("scheduleJsonInput").style.display = "block"
         document.getElementById("openScheduleJsonButton").style.display = "none"
+    }
 
+    function openLocationJsonInput() {
+        document.getElementById("locationJsonInput").style.display = "block"
+        document.getElementById("openLocationJsonButton").style.display = "none"
     }
 </script>
 
@@ -293,9 +469,11 @@
         resize: none;
     }
 
-    #scheduleJsonInput {
+    #scheduleJsonInput,
+    #locationJsonInput {
         font-size: 16px;
         height: 280px;
+        margin-top: 8px;
         overflow-wrap: normal;
         overflow-x: scroll;
         resize: auto;
@@ -318,6 +496,17 @@
 
     #nameInput {
         margin-bottom: 5px;
+    }
+
+    .settingsActionRow {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .settingsActionButton {
+        flex: 1;
+        height: 35px;
     }
 
     #refreshButton {
